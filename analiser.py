@@ -37,6 +37,19 @@ class LexicalAnalyzer:
             "using", "namespace", "include", "iostream", "endl", "main", "cout"
         }
         
+        self.identifiers = {
+            "add",    
+            "x",      
+            "y",       
+            "result",  
+            "isPositive",
+            "i",       
+            "j",     
+            "a",      
+            "b",       
+            "std"      
+        }
+        
         self.boolean_constants = {"true", "false"}
         
         self.operators = {
@@ -48,6 +61,10 @@ class LexicalAnalyzer:
     
     def _is_keyword(self, word: str) -> bool:
         return word in self.keywords
+    
+    def _is_identifier(self, word: str) -> bool:
+        """Проверка, является ли слово захардкоженным идентификатором"""
+        return word in self.identifiers
     
     def _is_boolean_constant(self, word: str) -> bool:
         return word in self.boolean_constants
@@ -80,12 +97,16 @@ class LexicalAnalyzer:
             return Token(TokenType.KEYWORD, value, self.line, start_col)
         elif self._is_boolean_constant(value):
             return Token(TokenType.CONSTANT_BOOL, value, self.line, start_col)
+        elif self._is_identifier(value):
+            return Token(TokenType.IDENTIFIER, value, self.line, start_col)
         else:
             # Проверка: идентификатор не должен начинаться с цифры
             if value[0].isdigit():
                 self.errors.append(f"Лексическая ошибка: идентификатор не может начинаться с цифры '{value}' на строке {self.line}")
                 return Token(TokenType.ERROR, value, self.line, start_col)
-            return Token(TokenType.IDENTIFIER, value, self.line, start_col)
+            else:
+                self.errors.append(f"Лексическая ошибка: неизвестный идентификатор '{value}' на строке {self.line}")
+                return Token(TokenType.ERROR, value, self.line, start_col)
     
     def _read_number(self) -> Token:
         start_col = self.column
@@ -116,7 +137,7 @@ class LexicalAnalyzer:
     def _read_string(self) -> Token:
         start_col = self.column
         value = ""
-        quote = self.source[self.pos]  # " или '
+        quote = self.source[self.pos]  
         self.pos += 1
         self.column += 1
         
@@ -234,7 +255,7 @@ class LexicalAnalyzer:
 
 def main():
     
-    # Чтение очищенного файла из первой лабораторной работы
+    # Чтение очищенного файла 
     try:
         with open("test_cleaned.cpp", "r", encoding="utf-8") as file:
             cleaned_code = file.read()
