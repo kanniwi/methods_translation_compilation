@@ -826,6 +826,34 @@ class SemanticAnalyzer:
             result = self.process_expression(init_node)
             self.add_triad(":=", name, result)
 
+    def visit_ExprStmt(self, node: ASTNode, scope: str):
+        """
+        Проверяет выражение-оператор (ExprStmt).
+        Голый идентификатор без операции — например, x; — является семантической ошибкой:
+        переменная упомянута, но никакого действия не производится.
+        Допустимы только: вызов функции (add(x,y);) и постфикс (i++;).
+        """
+        if not node.children:
+            return
+        expr = node.children[0]
+
+        if expr.kind == "Identifier":
+            name = expr.attrs.get("name", "?")
+            self.errors.append(
+                f"Семантическая ошибка: выражение-оператор '{name};' не имеет эффекта — "
+                f"переменная упомянута без присваивания или вызова функции"
+            )
+            return
+
+        if expr.kind == "Literal":
+            self.errors.append(
+                f"Семантическая ошибка: выражение-оператор '{expr.attrs.get('value')};' не имеет эффекта"
+            )
+            return
+
+        # Допустимые случаи: FuncCall, PostfixExpr — обходим дочерние узлы
+        self.generic_visit(node, scope)
+
     def visit_AssignStmt(self, node: ASTNode, scope: str):
         target = node.attrs["target"]
         if target not in self.symbol_table:
