@@ -774,6 +774,10 @@ class SemanticAnalyzer:
         self.errors: List[str] = []
         self.triads = []
         self.triad_num = 1
+        # Реестр функций: имя → {"return_type": str, "params": [{"name": str, "type": str}, ...]}
+        self.function_table: dict = {}
+        # Текущая функция (для проверки return)
+        self._current_func: str = None
 
     def add_triad(self, op, arg1, arg2):
         triad = (self.triad_num, op, arg1, arg2)
@@ -791,8 +795,60 @@ class SemanticAnalyzer:
 
     def visit_FunctionDef(self, node: ASTNode, scope: str):
         func_name = node.attrs.get("name")
+        return_type = node.attrs.get("return_type", "unknown")
+
+        # Собираем список параметров из дочернего узла ParamList
+        params = []
+        for child in node.children:
+            if child.kind == "ParamList":
+                for param in child.children:
+                    params.append({
+                        "name": param.attrs.get("name"),
+                        "type": param.attrs.get("type"),
+                    })
+
+        # Регистрируем функцию
+        self.function_table[func_name] = {
+            "return_type": return_type,
+            "params": params,
+        }
+
+        # Обходим тело функции, запомнив текущую функцию для проверки return
+        prev_func = self._current_func
+        self._current_func = func_name
         for child in node.children:
             self.analyze(child, func_name)
+        self._current_func = prev_func
+
+    def visit_ReturnStmt(self, node: ASTNode, scope: str):
+        """Проверяет, что тип возвращаемого значения совпадает с объявленным типом функции."""
+        if self._current_func is None or self._current_func not in self.function_table:
+            self.generic_visit(node, scope)
+            return
+
+        expected_type = self.function_table[self._current_func]["return_type"]
+
+        if not node.children:
+            # return; — возвращает void
+            if expected_type != "void":
+                self.errors.append(
+                    f"Семантическая ошибка: функция '{self._current_func}' "
+                    f"объявлена как '{expected_type}', но возвращает void (пустой return)"
+                )
+            return
+
+        expr = node.children[0]
+        actual_type = self.get_expression_type(expr)
+
+        if actual_type != expected_type:
+            self.errors.append(
+                f"Ошибка типов: функция '{self._current_func}' объявлена как '{expected_type}', "
+                f"но оператор return возвращает значение типа '{actual_type}'"
+            )
+
+        # Генерируем триаду для return
+        result = self.process_expression(expr)
+        self.add_triad("return", result, "-")
 
     def visit_Param(self, node: ASTNode, scope: str):
         name = node.attrs["name"]
@@ -899,6 +955,27 @@ class SemanticAnalyzer:
                     self.errors.append(f"Ошибка типов: логическая операция '{op}' требует bool")
                 return "bool"
         if node.kind == "FuncCall":
+            func_name = node.attrs["name"]
+            if func_name in self.function_table:
+                func_info = self.function_table[func_name]
+                expected_params = func_info["params"]
+                actual_args = node.children
+                # Проверка количества аргументов
+                if len(actual_args) != len(expected_params):
+                    self.errors.append(
+                        f"Семантическая ошибка: функция '{func_name}' ожидает "
+                        f"{len(expected_params)} аргумент(а/ов), передано {len(actual_args)}"
+                    )
+                else:
+                    # Проверка типов аргументов
+                    for i, (arg, param) in enumerate(zip(actual_args, expected_params)):
+                        arg_type = self.get_expression_type(arg)
+                        if arg_type != param["type"]:
+                            self.errors.append(
+                                f"Ошибка типов: аргумент {i + 1} функции '{func_name}' "
+                                f"должен быть '{param['type']}', передан '{arg_type}'"
+                            )
+                return func_info["return_type"]
             return "int"
         return "unknown"
 
@@ -912,8 +989,15 @@ class SemanticAnalyzer:
             right = self.process_expression(node.children[1])
             return self.add_triad(node.attrs["op"], left, right)
         if node.kind == "FuncCall":
+            func_name = node.attrs["name"]
+            if func_name in self.function_table:
+                expected_params = self.function_table[func_name]["params"]
+                actual_args = node.children
+                if len(actual_args) != len(expected_params):
+                    # Ошибка уже добавлена в get_expression_type, просто генерируем триаду как есть
+                    pass
             args = [self.process_expression(arg) for arg in node.children]
-            return self.add_triad(f"call {node.attrs['name']}", ", ".join(args), "-")
+            return self.add_triad(f"call {func_name}", ", ".join(args), "-")
         if node.kind == "PostfixExpr":
             ident = self.process_expression(node.children[0])
             return self.add_triad(node.attrs["op"], ident, "-")
